@@ -24,7 +24,41 @@ def is_in_zone(lat, lon, center):
     except:
         return False
 
+def inject_route_deviation(df):
+    if df.empty:
+        return df
 
+    data = df.copy()
+
+    # Select one truck randomly
+    truck_id = data["truck_id"].sample(1, random_state=42).iloc[0]
+
+    print(f"\nInjecting route deviation for truck: {truck_id}")
+
+    # Select part of the journey
+    truck_mask = data["truck_id"] == truck_id
+    truck_data = data[truck_mask].copy()
+
+    if len(truck_data) < 20:
+        return data
+
+    # Take middle segment of the trip
+    start_idx = len(truck_data) // 3
+    end_idx = start_idx + 10
+
+    deviation_idx = truck_data.iloc[start_idx:end_idx].index
+
+    """ # Apply deviation (shift coordinates)
+    data.loc[deviation_idx, "latitude"] += 0.05
+    data.loc[deviation_idx, "longitude"] += 0.05 """
+    # Apply stronger deviation (more visible on map)
+    data.loc[deviation_idx, "latitude"] += 0.1
+    data.loc[deviation_idx, "longitude"] += 0.1
+
+    print("Route deviation injected successfully")
+
+
+    return data
 def reconstruct_trips(df):
     trips = []
 
@@ -113,7 +147,37 @@ def simulate_anomaly(trips):
     )
 
     return trips
+def inject_strong_anomalies(trips):
+    if trips.empty or len(trips) < 5:
+        return trips
 
+    df = trips.copy()
+
+    # Select 3 random trips
+    sample_idx = df.sample(5, random_state=42).index
+
+    # 🔴 VERY LONG TRIP
+    df.loc[sample_idx[0], "duration_min"] *= 2.5
+    df.loc[sample_idx[0], "anomaly"] = "LONG_TRIP"
+
+    # 🟠 VERY SHORT TRIP
+    df.loc[sample_idx[1], "duration_min"] = 10
+    df.loc[sample_idx[1], "anomaly"] = "SHORT_TRIP"
+
+    # 🔴 EXTREME LONG TRIP
+    df.loc[sample_idx[2], "duration_min"] = 300
+    df.loc[sample_idx[2], "anomaly"] = "EX_LONG_TRIP"
+
+    # Adjust end_time accordingly
+    df.loc[sample_idx, "end_time"] = df.loc[sample_idx].apply(
+        lambda row: pd.to_datetime(row["start_time"]) + pd.Timedelta(minutes=row["duration_min"]),
+        axis=1
+    )
+
+    print("\nInjected strong anomalies on trips:")
+    print(df.loc[sample_idx][["trip_id", "duration_min", "anomaly"]])
+
+    return df
 
 def main():
     print("Loading Bronze data...")
@@ -121,16 +185,21 @@ def main():
 
     df["timestamp"] = pd.to_datetime(df["timestamp"])
 
+    # 👉 Inject route deviation BEFORE trip reconstruction
+    df = inject_route_deviation(df)
+
     print("Reconstructing trips...")
     trips = reconstruct_trips(df)
 
     print("Trips created:", len(trips))
 
-    # 👉 simulate anomaly BEFORE detection
-    trips = simulate_anomaly(trips)
-
+   
+  
     print("Detecting anomalies...")
     trips = detect_anomalies(trips)
+
+    # 👉 Inject strong anomalies AFTER detection
+    trips = inject_strong_anomalies(trips)
 
     print("\nAverage duration:", trips["duration_min"].mean())
 
